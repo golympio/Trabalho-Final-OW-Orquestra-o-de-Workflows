@@ -322,7 +322,18 @@ docker compose exec postgres psql -U puc -d vendas -c "SELECT * FROM gold_vendas
 - **Resultado esperado:** **+15 válidas** e **+5 rejeitadas**, uma para cada motivo:
   `venda_id_origem_ausente`, `data_venda_invalida`, `quantidade_invalida`,
   `valor_unitario_invalido`, `produto_invalido_ou_incompativel`.
-- **Forma de validação:**
+- **Forma de validação (no Prefect — UI e CLI):** o run do arquivo inválido **conclui
+  normalmente** (6 tasks) e as **contagens da carga parcial** aparecem nos logs e no artifact.
+  - **UI do Prefect → Runs:** abra o run do `_002` → os **logs** mostram
+    `Silver: 15 válidas, 5 rejeitadas.` e `Ingestão concluída: {'validas': 15, 'rejeitadas': 5, 'total': 20}`;
+    o **Artifact `resumo-ingestao`** também traz válidas/rejeitadas.
+  - **CLI:**
+    ```bash
+    docker compose exec prefect-worker prefect flow-run ls           # copie o ID do run do arquivo _002
+    docker compose exec prefect-worker prefect flow-run logs <ID>    # 'Silver: 15 válidas, 5 rejeitadas'
+    ```
+- **Forma de validação (no banco — os motivos):** o Prefect mostra **quantas** foram rejeitadas;
+  o banco mostra **por quê** (o motivo e o conteúdo original de cada uma):
   ```bash
   docker compose exec postgres psql -U puc -d vendas -c "SELECT motivo,COUNT(*) FROM silver_vendas_rejeitadas GROUP BY motivo ORDER BY motivo;"
   ```

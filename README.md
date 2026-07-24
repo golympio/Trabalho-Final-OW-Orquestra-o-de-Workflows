@@ -192,7 +192,7 @@ uma única filial**; a data do nome é usada em `data_venda`.
 
 ## 8. Acompanhar no Prefect
 
-Na **UI (http://localhost:4200)**:
+Na **UI do Prefect** (http://localhost:4200):
 
 - **Event Feed** → filtre por `vendas.arquivo.recebido` (um evento emitido a cada arquivo; o
   campo **Resource** mostra o objeto de origem, ex.: `minio.object.landing/VENDAS_SP01_...csv`).
@@ -288,9 +288,13 @@ docker compose exec postgres psql -U puc -d vendas -c "SELECT * FROM gold_vendas
   docker compose exec postgres psql -U puc -d vendas -c "SELECT COUNT(*) FROM silver_vendas;"          # 80
   docker compose exec postgres psql -U puc -d vendas -c "SELECT filial,quantidade_vendas FROM gold_vendas_por_filial ORDER BY filial;"
   ```
-- **Evidência de sucesso:** UI mostra 4 runs verdes + Artifacts; `silver=80`. No **MinIO Console**
-  (bucket `bronze`) aparecem os 4 objetos preservados; no **Adminer**, `selecionar silver_vendas`
-  mostra as 80 linhas.
+- **Evidência de sucesso:**
+  - **Prefect UI → Runs (aba Flow runs):** 4 runs **verdes (Completed)**, um por arquivo (com
+    Artifacts). *(Esta tela mostra os 4 **runs** — não a contagem de vendas.)*
+  - **Contagem de 80 vendas:** é a quantidade de linhas na **Silver** (banco), não aparece na
+    tela de Runs. Veja pelo `psql` acima (`SELECT COUNT(*) FROM silver_vendas` → 80) **ou** no
+    **Adminer** → `selecionar silver_vendas` (lista as 80 linhas).
+  - **MinIO Console** (bucket `bronze`): os 4 objetos brutos preservados.
 - **Em caso de falha:** ver `docker compose logs prefect-worker`; conferir se o deployment/automation existem (`prefect deployment ls`).
 
 ### Teste 2 — Registros inválidos (carga parcial)
@@ -339,8 +343,9 @@ docker compose exec postgres psql -U puc -d vendas -c "SELECT * FROM gold_vendas
 - **Procedimento:** `./scripts/enviar_arquivo.sh samples/VENDAS_MG01_20260723_FALHA_001.csv`
 - **Resultado esperado:** a task `checkpoint_falha_controlada` **falha nas 2 primeiras
   tentativas e conclui na 3ª** (`run_count = 3`); o flow termina **Completed**; +20 válidas.
-- **Forma de validação:** na UI, o run mostra a task com estados
-  `AwaitingRetry → Retrying → Completed`. Por CLI:
+- **Forma de validação:** na **UI do Prefect** (Runs → abra o flow run do arquivo `FALHA`), a
+  task `checkpoint_falha_controlada` mostra os estados `AwaitingRetry → Retrying → Completed`.
+  Por CLI:
   ```bash
   docker compose exec prefect-worker prefect flow-run ls   # o run do arquivo FALHA está Completed
   ```
@@ -379,10 +384,10 @@ docker compose up -d       # sobe novamente
 | Sintoma | Causa provável | Solução |
 |---|---|---|
 | UI do Prefect: "Can't connect to Server API at `0.0.0.0:4200`" | Cache do navegador | `Ctrl+F5`. A API usa `http://localhost:4200/api` (`PREFECT_UI_API_URL`). |
-| Arquivo enviado não dispara run | Automation/notification ausente | `docker compose up prefect-init` e `docker compose up minio-init`; confira **Automations** na UI. |
+| Arquivo enviado não dispara run | Automation/notification ausente | `docker compose up prefect-init` e `docker compose up minio-init`; confira **Automations** na UI do Prefect. |
 | `prefect-init` falhou na 1ª subida | work pool ainda não existia | Já tratado (o init cria o pool antes). Reexecute `docker compose up prefect-init`. |
 | Porta ocupada | 4200/9001/8080/8000 em uso | Libere a porta ou ajuste o mapeamento no `docker-compose.yml`. |
-| Nada no `bronze/` | pipeline não rodou | Veja `docker compose logs prefect-worker` e o **Event Feed** da UI. |
+| Nada no `bronze/` | pipeline não rodou | Veja `docker compose logs prefect-worker` e o **Event Feed** da UI do Prefect. |
 | Conferir se a ponte MinIO→Prefect está viva | — | Acesse `http://localhost:8000/health` — deve responder `{"status":"ok","mode":"automation"}`. (O MinIO chama a ponte internamente; essa URL é só diagnóstico.) |
 
 ---

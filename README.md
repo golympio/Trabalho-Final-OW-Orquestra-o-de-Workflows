@@ -328,18 +328,17 @@ docker compose exec postgres psql -U puc -d vendas -c "SELECT * FROM gold_vendas
   ```
   > **Adminer (web):** `selecionar silver_vendas_rejeitadas` mostra as 5 linhas com `motivo`,
   > `detalhe` e `payload_raw` (o conteúdo original de cada linha rejeitada).
-- **Evidência de sucesso:**
-  - A consulta acima retorna **5 motivos distintos** (1 linha cada) em `silver_vendas_rejeitadas`.
-  - O registro de controle do arquivo confirma a **carga parcial** — `linhas_total = 20`,
-    `linhas_validas = 15`, `linhas_rejeitadas = 5`:
-    ```bash
-    docker compose exec postgres psql -U puc -d vendas -c "SELECT original_name, linhas_total, linhas_validas, linhas_rejeitadas FROM bronze_arquivos WHERE original_name = 'VENDAS_SP01_20260723_002.csv';"
-    ```
-    No **Adminer** (§9): **`selecionar bronze_arquivos`** → a coluna **`original_name`** identifica
-    a linha do arquivo `VENDAS_SP01_20260723_002.csv`, e as colunas
-    **`linhas_total / linhas_validas / linhas_rejeitadas`** mostram **20 / 15 / 5** (role na
-    horizontal para vê-las).
+
+  A consulta acima retorna **5 motivos distintos** (1 linha cada) em `silver_vendas_rejeitadas`.
 - **Em caso de falha:** verifique a coluna `motivo`/`payload_raw` das rejeitadas.
+- **Evidência de sucesso:** o registro de controle confirma a **carga parcial** do arquivo —
+  no **Adminer** (§9), **`selecionar bronze_arquivos`**: a coluna **`original_name`** identifica a
+  linha de `VENDAS_SP01_20260723_002.csv`, e as colunas
+  **`linhas_total / linhas_validas / linhas_rejeitadas`** mostram **20 / 15 / 5** (role na
+  horizontal para vê-las). Por CLI:
+  ```bash
+  docker compose exec postgres psql -U puc -d vendas -c "SELECT original_name, linhas_total, linhas_validas, linhas_rejeitadas FROM bronze_arquivos WHERE original_name = 'VENDAS_SP01_20260723_002.csv';"
+  ```
 
 ### Teste 3 — Arquivo/venda duplicados (idempotência)
 

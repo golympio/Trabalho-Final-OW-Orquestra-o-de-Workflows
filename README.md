@@ -352,14 +352,29 @@ docker compose exec postgres psql -U puc -d vendas -c "SELECT * FROM gold_vendas
 - **Resultado esperado:** o duplicado insere **18 válidas** + **2** `duplicado_no_arquivo`; o
   reenvio **não** cria novo registro em `bronze_arquivos` (status `duplicado`, short-circuit).
   As duas consultas de duplicidade retornam **0 linhas**.
-- **Forma de validação:**
+- **Forma de validação (no Prefect — UI e CLI):** o reenvio **cria um novo flow run** (o evento
+  disparou de novo), mas ele **conclui com apenas 1 task** (`registrar_arquivo`) em vez das **6**
+  de um run normal — o pipeline detecta o sha256 já processado e **para** (short-circuit).
+  - **UI do Prefect → Runs:** abra o run do reenvio → **1 task** e o log
+    *"Arquivo duplicado (idempotência de arquivo): nada a reprocessar."*
+  - **CLI:**
+    ```bash
+    # lista os runs; o reenvio aparece Completed (copie o ID dele)
+    docker compose exec prefect-worker prefect flow-run ls
+    # mostra os logs do run (inclui 'Arquivo duplicado ... nada a reprocessar')
+    docker compose exec prefect-worker prefect flow-run logs <ID-DO-RUN>
+    ```
+- **Forma de validação (no banco — complementar):** o Prefect mostra que o pipeline **não
+  reprocessou**; o banco confirma que **não há linhas duplicadas** nas tabelas:
   ```bash
-  docker compose exec postgres psql -U puc -d vendas -c "SELECT sha256,COUNT(*) FROM bronze_arquivos GROUP BY sha256 HAVING COUNT(*)>1;"                 -- 0 linhas
-  docker compose exec postgres psql -U puc -d vendas -c "SELECT origem,venda_id_origem,COUNT(*) FROM silver_vendas GROUP BY 1,2 HAVING COUNT(*)>1;"      -- 0 linhas
+  # ambas devem retornar 0 linhas (nenhuma duplicidade)
+  docker compose exec postgres psql -U puc -d vendas -c "SELECT sha256,COUNT(*) FROM bronze_arquivos GROUP BY sha256 HAVING COUNT(*)>1;"
+  docker compose exec postgres psql -U puc -d vendas -c "SELECT origem,venda_id_origem,COUNT(*) FROM silver_vendas GROUP BY 1,2 HAVING COUNT(*)>1;"
   ```
   > **Adminer (web):** cole as duas consultas em **Comando SQL** (ambas devem voltar vazias). Em
   > `selecionar bronze_arquivos`, o reenviado aparece com `status = duplicado`.
-- **Evidência de sucesso:** ambas as consultas **vazias**; `bronze_arquivos` continua com 7 arquivos.
+- **Evidência de sucesso:** no Prefect, o run do reenvio tem **1 task** (vs 6) e log de duplicado;
+  no banco, ambas as consultas ficam **vazias** e `bronze_arquivos` continua com 7 arquivos.
 - **Em caso de falha:** havendo duplicidade, revise as constraints (`\d silver_vendas`).
 
 ### Teste 4 — Falha com retry (resiliência)

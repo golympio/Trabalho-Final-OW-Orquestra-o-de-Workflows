@@ -224,10 +224,21 @@ docker compose logs -f prefect-worker
 ## 9. Validar as camadas
 
 As verificações abaixo estão por **linha de comando**, mas **todas têm equivalente na interface
-web** — use o que preferir:
-- **Adminer** (http://localhost:8080) para o **banco**: botão **Comando SQL** para rodar as
-  consultas, ou **selecionar `<tabela>`** (menu à esquerda) para navegar os dados.
-- **MinIO Console** (http://localhost:9001) para os **buckets** (`landing` e `bronze`).
+web** — use o que preferir.
+
+**Como consultar no Adminer (banco):**
+1. Abra **http://localhost:8080** e faça login: Sistema **PostgreSQL**, Servidor `postgres`,
+   Usuário `puc`, Senha `puc`, Base de dados `vendas`.
+2. No menu à **esquerda**, clique em **`selecionar <tabela>`** (ex.: `bronze_arquivos`,
+   `silver_vendas`, `gold_vendas_por_filial`) para **ver os dados**; ou em **Comando SQL** para
+   **rodar uma consulta**.
+3. **Dica:** a tabela pode ser larga — **role na horizontal** para ver todas as colunas (ex.: em
+   `bronze_arquivos`, `original_name` fica mais à esquerda e `linhas_total/validas/rejeitadas`
+   mais à direita).
+
+**Como ver os buckets no MinIO (arquivos):** abra **http://localhost:9001**
+(`minioadmin`/`minioadmin`) e navegue pelos buckets `landing` (arquivos recebidos) e `bronze`
+(brutos preservados).
 
 **Consulta consolidada (Bronze-controle, idempotência, rejeitados, rastreabilidade, Gold):**
 
@@ -317,7 +328,17 @@ docker compose exec postgres psql -U puc -d vendas -c "SELECT * FROM gold_vendas
   ```
   > **Adminer (web):** `selecionar silver_vendas_rejeitadas` mostra as 5 linhas com `motivo`,
   > `detalhe` e `payload_raw` (o conteúdo original de cada linha rejeitada).
-- **Evidência de sucesso:** `bronze_arquivos` mostra o arquivo `20 | 15 | 5`; 5 motivos distintos.
+- **Evidência de sucesso:**
+  - A consulta acima retorna **5 motivos distintos** (1 linha cada) em `silver_vendas_rejeitadas`.
+  - O registro de controle do arquivo confirma a **carga parcial** — `linhas_total = 20`,
+    `linhas_validas = 15`, `linhas_rejeitadas = 5`:
+    ```bash
+    docker compose exec postgres psql -U puc -d vendas -c "SELECT original_name, linhas_total, linhas_validas, linhas_rejeitadas FROM bronze_arquivos WHERE original_name = 'VENDAS_SP01_20260723_002.csv';"
+    ```
+    No **Adminer** (§9): **`selecionar bronze_arquivos`** → a coluna **`original_name`** identifica
+    a linha do arquivo `VENDAS_SP01_20260723_002.csv`, e as colunas
+    **`linhas_total / linhas_validas / linhas_rejeitadas`** mostram **20 / 15 / 5** (role na
+    horizontal para vê-las).
 - **Em caso de falha:** verifique a coluna `motivo`/`payload_raw` das rejeitadas.
 
 ### Teste 3 — Arquivo/venda duplicados (idempotência)

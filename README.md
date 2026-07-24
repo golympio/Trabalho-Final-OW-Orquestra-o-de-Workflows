@@ -26,16 +26,16 @@ projeto automatiza tudo, do recebimento do arquivo até indicadores consolidados
 **Cadeia event-driven:**
 
 ```
-Filial envia CSV ─▶ MinIO (bucket landing)
+Filial envia CSV ▶ MinIO (bucket landing)
                       │ s3:ObjectCreated (notification/webhook)
                       ▼
-                 event-bridge (FastAPI)  ── emit_event("vendas.arquivo.recebido")
+                 event-bridge (FastAPI)  ▶ emit_event("vendas.arquivo.recebido")
                       │
                       ▼
-                 Prefect Event ─▶ Automation ─▶ Deployment "ingestao-vendas"
+                 Prefect Event ▶ Automation ▶ Deployment "ingestao-vendas"
                       │
                       ▼
-                 Worker executa o flow  ──▶  Bronze ▶ Silver ▶ Gold
+                 Worker executa o flow  ▶  Bronze ▶ Silver ▶ Gold
 ```
 
 **Camadas Medalhão:**
@@ -95,9 +95,15 @@ Na **primeira subida**, os serviços de init criam **automaticamente**: os banco
 `vendas` + o schema Medalhão; os buckets `landing`/`bronze` + a notification; o work pool
 `vendas-pool`, o deployment `ingestao-vendas` e a **Automation** de disparo.
 
-**Saúde esperada** (`docker compose ps`): `postgres` e `prefect-server` **healthy**;
-`event-bridge` **healthy**; `prefect-worker`, `minio`, `adminer` **running**; `minio-init` e
-`prefect-init` **exited (0)** (são one-shot).
+**Saúde esperada** (`docker compose ps`): `postgres`, `prefect-server` e `event-bridge` com
+**(healthy)**; `minio`, `prefect-worker` e `adminer` **Up** (running). Os containers de
+inicialização **`minio-init`** e **`prefect-init`** rodam uma vez e **saem (Exited 0)** — por
+isso **não aparecem** no `docker compose ps` comum; para vê-los (e confirmar que terminaram sem
+erro), use:
+
+```bash
+docker compose ps -a          # mostra também os containers já encerrados (init)
+```
 
 ### Acessos
 
@@ -106,7 +112,6 @@ Na **primeira subida**, os serviços de init criam **automaticamente**: os banco
 | Prefect UI | http://localhost:4200 | — |
 | MinIO Console | http://localhost:9001 | `minioadmin` / `minioadmin` |
 | Adminer | http://localhost:8080 | Sistema **PostgreSQL**, Servidor `postgres`, Usuário `puc`, Senha `puc`, Base `vendas` |
-| event-bridge (health) | http://localhost:8000/health | — |
 
 ---
 
@@ -127,7 +132,6 @@ sql/inspecao.sql         # consultas de verificação
 samples/                 # 7 CSVs canônicos versionados (fonte dos testes)
 scripts/gerar_vendas.py  # gerador determinístico (§ Amostras)
 scripts/enviar_arquivo.sh# envia um CSV para o landing (dispara o pipeline)
-docs/pitch.md            # roteiro do pitch
 ```
 
 ---
@@ -165,8 +169,24 @@ make samples
 python3 scripts/gerar_vendas.py --origem RJ01 --cenario valido --linhas 100 --seq 009 --seed 7 --saida samples
 ```
 
+**Parâmetros:**
+
+| Parâmetro | O que controla | Exemplo |
+|---|---|---|
+| `--origem` | a filial (uma por arquivo) | `SP01`, `SP02`, `RJ01`, `MG01` |
+| `--cenario` | o tipo de arquivo | `valido`, `invalido`, `duplicado`, `falha` |
+| `--linhas` | quantas vendas gerar | `100` |
+| `--seq` | o sequencial (3 dígitos) no nome | `009` |
+| `--data` | a data do lote (AAAAMMDD) | `20260723` (padrão) |
+| `--seed` | a semente (reprodutibilidade: mesma seed ⇒ mesmo arquivo) | `7` |
+| `--saida` | pasta onde salvar | `samples` |
+
 Convenção de nome: `VENDAS_<ORIGEM>_<AAAAMMDD>[_FALHA]_<seq>.csv`. Cada execução gera **um CSV de
 uma única filial**; a data do nome é usada em `data_venda`.
+
+> **Importante:** gerar um arquivo **não** o processa — apenas o cria em `samples/`. Para ele
+> entrar no pipeline (e aparecer no banco/Adminer), **envie-o** com
+> `./scripts/enviar_arquivo.sh samples/<arquivo>.csv` (§7).
 
 ---
 
@@ -174,10 +194,22 @@ uma única filial**; a data do nome é usada em `data_venda`.
 
 Na **UI (http://localhost:4200)**:
 
-- **Events** → filtre por `vendas.arquivo.recebido` (evento emitido a cada arquivo).
-- **Automations** → `disparar-ingestao-vendas` (histórico de disparos).
-- **Runs / Deployments** → `processar_arquivo_vendas/ingestao-vendas`; abra um run para ver as
-  **tasks**, **logs**, **retries** e o **Artifact** de resumo.
+- **Event Feed** → filtre por `vendas.arquivo.recebido` (um evento emitido a cada arquivo; o
+  campo **Resource** mostra o objeto de origem, ex.: `minio.object.landing/VENDAS_SP01_...csv`).
+  **Expanda o evento** (seta ▾) para ver o **payload** com `bucket`, `key`, `origem` e
+  `object_id` — são justamente os dados que a Automation repassa ao flow.
+- **Automations** → `disparar-ingestao-vendas` (ativa): **Trigger** = evento customizado,
+  **Action** = *Run deployment* `ingestao-vendas`. Clique em **Show parameters** para ver os
+  parâmetros templados do evento (`{{ event.payload.bucket }}`, `key`, `origem`). A evidência de
+  que ela **disparou** está em **Runs** (o run criado) e no **Event Feed**.
+- **Runs** → aba **Flow runs**: cada arquivo enviado vira **um flow run** de
+  `processar_arquivo_vendas`, **nomeado pelo arquivo** (ex.: `ingestao-VENDAS_SP01_20260723_001.csv`),
+  com **3 Parameters** = bucket/key/origem e **6 Task runs**.
+  **Abra o flow run** para ver, no mesmo lugar, as **tasks** (Bronze→Silver→Gold), os **logs**
+  (que narram cada etapa: `Arquivo registrado…`, `Bronze preservado…`, `Silver: N válidas, M
+  rejeitadas`, `Gold recomputada`, `Ingestão concluída`), os **retries** e o **Artifact** de
+  resumo. *(A aba **Task runs** é uma lista solta das tasks de todos os runs — secundária.)*
+- **Deployments** → `ingestao-vendas`: a configuração do deployment disparado pela Automation.
 
 Por linha de comando:
 
@@ -191,11 +223,19 @@ docker compose logs -f prefect-worker
 
 ## 9. Validar as camadas
 
+As verificações abaixo estão por **linha de comando**, mas **todas têm equivalente na interface
+web** — use o que preferir:
+- **Adminer** (http://localhost:8080) para o **banco**: botão **Comando SQL** para rodar as
+  consultas, ou **selecionar `<tabela>`** (menu à esquerda) para navegar os dados.
+- **MinIO Console** (http://localhost:9001) para os **buckets** (`landing` e `bronze`).
+
 **Consulta consolidada (Bronze-controle, idempotência, rejeitados, rastreabilidade, Gold):**
 
 ```bash
 docker compose exec -T postgres psql -U puc -d vendas < sql/inspecao.sql
 ```
+> **Adminer (web):** abra **Comando SQL**, cole o conteúdo de `sql/inspecao.sql` e clique em
+> **Executar**.
 
 **Bronze (objeto bruto imutável no MinIO):**
 
@@ -203,6 +243,8 @@ docker compose exec -T postgres psql -U puc -d vendas < sql/inspecao.sql
 docker compose run --rm --no-deps --entrypoint sh minio-init -c \
   'mc alias set local http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null; mc ls --recursive local/bronze'
 ```
+> **MinIO Console (web):** abra o bucket **`bronze`** e navegue por `ingest_date=…/origem=…/`. O
+> **preview** de CSV fica indisponível — use **Download** para ver o conteúdo.
 
 **Consultas pontuais:**
 
@@ -214,6 +256,8 @@ docker compose exec postgres psql -U puc -d vendas -c "SELECT motivo, COUNT(*) F
 # Gold
 docker compose exec postgres psql -U puc -d vendas -c "SELECT * FROM gold_vendas_por_filial ORDER BY filial;"
 ```
+> **Adminer (web):** clique em **selecionar `silver_vendas`**, **`silver_vendas_rejeitadas`** e
+> **`gold_vendas_por_filial`** para navegar os dados; ou rode as mesmas queries em **Comando SQL**.
 
 ---
 
@@ -221,6 +265,10 @@ docker compose exec postgres psql -U puc -d vendas -c "SELECT * FROM gold_vendas
 
 > Faça sempre a partir de um ambiente limpo: `docker compose down -v && docker compose up -d`
 > (aguarde ~30–60s a inicialização). Envie os arquivos na ordem abaixo.
+>
+> As validações abaixo estão em CLI, mas cada consulta ao banco pode ser feita também no
+> **Adminer** (http://localhost:8080 → **Comando SQL** ou **selecionar `<tabela>`**) e as
+> checagens de bucket no **MinIO Console** (http://localhost:9001). Ver §9.
 
 ### Teste 1 — Arquivo válido
 
@@ -240,7 +288,9 @@ docker compose exec postgres psql -U puc -d vendas -c "SELECT * FROM gold_vendas
   docker compose exec postgres psql -U puc -d vendas -c "SELECT COUNT(*) FROM silver_vendas;"          # 80
   docker compose exec postgres psql -U puc -d vendas -c "SELECT filial,quantidade_vendas FROM gold_vendas_por_filial ORDER BY filial;"
   ```
-- **Evidência de sucesso:** UI mostra 4 runs verdes + Artifacts; `silver=80`.
+- **Evidência de sucesso:** UI mostra 4 runs verdes + Artifacts; `silver=80`. No **MinIO Console**
+  (bucket `bronze`) aparecem os 4 objetos preservados; no **Adminer**, `selecionar silver_vendas`
+  mostra as 80 linhas.
 - **Em caso de falha:** ver `docker compose logs prefect-worker`; conferir se o deployment/automation existem (`prefect deployment ls`).
 
 ### Teste 2 — Registros inválidos (carga parcial)
@@ -255,6 +305,8 @@ docker compose exec postgres psql -U puc -d vendas -c "SELECT * FROM gold_vendas
   ```bash
   docker compose exec postgres psql -U puc -d vendas -c "SELECT motivo,COUNT(*) FROM silver_vendas_rejeitadas GROUP BY motivo ORDER BY motivo;"
   ```
+  > **Adminer (web):** `selecionar silver_vendas_rejeitadas` mostra as 5 linhas com `motivo`,
+  > `detalhe` e `payload_raw` (o conteúdo original de cada linha rejeitada).
 - **Evidência de sucesso:** `bronze_arquivos` mostra o arquivo `20 | 15 | 5`; 5 motivos distintos.
 - **Em caso de falha:** verifique a coluna `motivo`/`payload_raw` das rejeitadas.
 
@@ -275,6 +327,8 @@ docker compose exec postgres psql -U puc -d vendas -c "SELECT * FROM gold_vendas
   docker compose exec postgres psql -U puc -d vendas -c "SELECT sha256,COUNT(*) FROM bronze_arquivos GROUP BY sha256 HAVING COUNT(*)>1;"                 -- 0 linhas
   docker compose exec postgres psql -U puc -d vendas -c "SELECT origem,venda_id_origem,COUNT(*) FROM silver_vendas GROUP BY 1,2 HAVING COUNT(*)>1;"      -- 0 linhas
   ```
+  > **Adminer (web):** cole as duas consultas em **Comando SQL** (ambas devem voltar vazias). Em
+  > `selecionar bronze_arquivos`, o reenviado aparece com `status = duplicado`.
 - **Evidência de sucesso:** ambas as consultas **vazias**; `bronze_arquivos` continua com 7 arquivos.
 - **Em caso de falha:** havendo duplicidade, revise as constraints (`\d silver_vendas`).
 
@@ -328,7 +382,8 @@ docker compose up -d       # sobe novamente
 | Arquivo enviado não dispara run | Automation/notification ausente | `docker compose up prefect-init` e `docker compose up minio-init`; confira **Automations** na UI. |
 | `prefect-init` falhou na 1ª subida | work pool ainda não existia | Já tratado (o init cria o pool antes). Reexecute `docker compose up prefect-init`. |
 | Porta ocupada | 4200/9001/8080/8000 em uso | Libere a porta ou ajuste o mapeamento no `docker-compose.yml`. |
-| Nada no `bronze/` | pipeline não rodou | Veja `docker compose logs prefect-worker` e o feed **Events**. |
+| Nada no `bronze/` | pipeline não rodou | Veja `docker compose logs prefect-worker` e o **Event Feed** da UI. |
+| Conferir se a ponte MinIO→Prefect está viva | — | Acesse `http://localhost:8000/health` — deve responder `{"status":"ok","mode":"automation"}`. (O MinIO chama a ponte internamente; essa URL é só diagnóstico.) |
 
 ---
 
@@ -355,7 +410,7 @@ docker compose up -d       # sobe novamente
 - [ ] **Idempotência:** duplicidade de arquivo e de venda = 0 (Teste 3).
 - [ ] **Modularidade:** tasks independentes em `tasks/` (Bronze/Silver/Gold).
 - [ ] **Persistência:** MinIO (Bronze) + PostgreSQL (Silver/Gold/controle).
-- [ ] **Observabilidade:** UI do Prefect (runs, logs, retries, Events, Automations) + Artifacts + Adminer.
+- [ ] **Observabilidade:** UI do Prefect (Runs, logs, retries, Event Feed, Automations) + Artifacts + Adminer.
 - [ ] **Documentação:** este README executável (§1–13).
 - [ ] **Pitch em Vídeo:** link preenchido na seção abaixo.
 

@@ -49,7 +49,7 @@ def _publicar_resumo(file_id, key, duplicado, validas=0, rejeitadas=0):
                              description=f"Resumo da ingestão de {key}")
 
 
-@flow(name="processar_arquivo_vendas", log_prints=True)
+@flow(name="processar_arquivo_vendas", flow_run_name="ingestao-{key}", log_prints=True)
 def processar_arquivo_vendas(bucket: str, key: str, origem: str | None = None) -> dict:
     """Processa um arquivo de vendas: Bronze (registro+preservação) -> Silver
     (validação/dedup) -> Gold (KPIs), com idempotência e rastreabilidade."""

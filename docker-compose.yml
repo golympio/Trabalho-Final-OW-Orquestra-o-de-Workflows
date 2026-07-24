@@ -1,0 +1,196 @@
+# =============================================================================
+# Trabalho Final OW — pipeline event-driven Medalhão de vendas em Prefect
+# Ambiente 100% local (wsl-local). Suba tudo com: docker compose up -d
+#
+# HANDOFF 01 (esta versão): infraestrutura base
+#   postgres (bancos prefect + vendas) | prefect-server (UI 4200) |
+#   prefect-worker (pool vendas-pool) | minio (API 9000 / console 9001) |
+#   minio-init (cria buckets landing+bronze) | adminer (8080)
+#
+# Próximos HANDOFFs adicionam: event-bridge (FastAPI), prefect-init
+#   (deployment + Automation) e a bucket notification do MinIO.
+#
+# Versões PINADAS (ver ai/guardrails/package-versions.md).
+# Credenciais são de LAB — não use em produção.
+# =============================================================================
+
+name: trabalho-final-ow
+
+services:
+  postgres:
+    image: postgres:16.4-alpine
+    container_name: tfow-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-puc}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-puc}
+      POSTGRES_DB: ${PREFECT_DB:-prefect}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./sql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-puc} -d ${PREFECT_DB:-prefect}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    networks: [vendasnet]
+
+  prefect-server:
+    image: prefecthq/prefect:3.7.8-python3.12
+    container_name: tfow-prefect-server
+    command: prefect server start --host 0.0.0.0 --port 4200
+    environment:
+      PREFECT_API_DATABASE_CONNECTION_URL: postgresql+asyncpg://${POSTGRES_USER:-puc}:${POSTGRES_PASSWORD:-puc}@postgres:5432/${PREFECT_DB:-prefect}
+      PREFECT_SERVER_API_HOST: 0.0.0.0
+      # URL da API que o NAVEGADOR usa (0.0.0.0 é só bind; o browser precisa de localhost).
+      PREFECT_UI_API_URL: http://localhost:4200/api
+    ports:
+      - "4200:4200"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:4200/api/health').status==200 else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 25s
+    networks: [vendasnet]
+
+  prefect-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: tfow-worker:local
+    container_name: tfow-prefect-worker
+    command: prefect worker start --pool ${WORK_POOL:-vendas-pool} --type process
+    working_dir: /app
+    environment:
+      PREFECT_API_URL: http://prefect-server:4200/api
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      LANDING_BUCKET: ${LANDING_BUCKET:-landing}
+      BRONZE_BUCKET: ${BRONZE_BUCKET:-bronze}
+      PGHOST: postgres
+      PGDATABASE: ${VENDAS_DB:-vendas}
+      PGUSER: ${POSTGRES_USER:-puc}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-puc}
+    volumes:
+      - ./:/app
+    depends_on:
+      prefect-server:
+        condition: service_healthy
+    networks: [vendasnet]
+
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    container_name: tfow-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      # Alvo de notification (webhook) -> event-bridge. O binding no bucket é
+      # feito pelo minio-init (mc event add).
+      MINIO_NOTIFY_WEBHOOK_ENABLE_primary: "on"
+      MINIO_NOTIFY_WEBHOOK_ENDPOINT_primary: "http://event-bridge:8000/minio-events"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    depends_on:
+      event-bridge:
+        condition: service_healthy
+    networks: [vendasnet]
+
+  event-bridge:
+    build:
+      context: ./event-bridge
+      dockerfile: Dockerfile
+    image: tfow-event-bridge:local
+    container_name: tfow-event-bridge
+    environment:
+      PREFECT_API_URL: http://prefect-server:4200/api
+      EVENTO_VENDAS: ${EVENTO_VENDAS:-vendas.arquivo.recebido}
+      # automation (padrão) | direct (fallback do GATE §3.3.1)
+      BRIDGE_TRIGGER_MODE: ${BRIDGE_TRIGGER_MODE:-automation}
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)\""]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks: [vendasnet]
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    container_name: tfow-minio-init
+    depends_on:
+      minio:
+        condition: service_started
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      LANDING_BUCKET: ${LANDING_BUCKET:-landing}
+      BRONZE_BUCKET: ${BRONZE_BUCKET:-bronze}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        until mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"; do
+          echo "aguardando MinIO..."; sleep 2;
+        done
+        mc mb -p "local/$${LANDING_BUCKET}"
+        mc mb -p "local/$${BRONZE_BUCKET}"
+        # Notification: PUT no landing -> webhook (event-bridge). Idempotente.
+        mc event add "local/$${LANDING_BUCKET}" arn:minio:sqs::primary:webhook --event put 2>/dev/null || true
+        echo "=== buckets ==="; mc ls local
+        echo "=== eventos no landing ==="; mc event ls "local/$${LANDING_BUCKET}"
+    restart: "no"
+    networks: [vendasnet]
+
+  prefect-init:
+    image: tfow-worker:local
+    container_name: tfow-prefect-init
+    working_dir: /app
+    environment:
+      PREFECT_API_URL: http://prefect-server:4200/api
+      WORK_POOL: ${WORK_POOL:-vendas-pool}
+      EVENTO_VENDAS: ${EVENTO_VENDAS:-vendas.arquivo.recebido}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        # Cria o work pool (idempotente) antes do deploy, sem depender do worker.
+        prefect work-pool create "$${WORK_POOL}" --type process 2>/dev/null || echo "work pool ja existe"
+        python /app/flows/deploy.py
+        python /app/automations/criar_automation.py
+    volumes:
+      - ./:/app
+    depends_on:
+      prefect-server:
+        condition: service_healthy
+    restart: "no"
+    networks: [vendasnet]
+
+  adminer:
+    image: adminer:4.8.1
+    container_name: tfow-adminer
+    ports:
+      - "8080:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [vendasnet]
+
+volumes:
+  postgres-data:
+  minio-data:
+
+networks:
+  vendasnet:
+    driver: bridge

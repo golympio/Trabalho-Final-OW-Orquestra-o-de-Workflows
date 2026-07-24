@@ -229,10 +229,16 @@ web** — use o que preferir.
 **Como consultar no Adminer (banco):**
 1. Abra **http://localhost:8080** e faça login: Sistema **PostgreSQL**, Servidor `postgres`,
    Usuário `puc`, Senha `puc`, Base de dados `vendas`.
-2. No menu à **esquerda**, clique em **`selecionar <tabela>`** (ex.: `bronze_arquivos`,
-   `silver_vendas`, `gold_vendas_por_filial`) para **ver os dados**; ou em **Comando SQL** para
-   **rodar uma consulta**.
-3. **Dica:** a tabela pode ser larga — **role na horizontal** para ver todas as colunas (ex.: em
+2. No menu à **esquerda** (canto superior, abaixo do logo/seletores): clique em
+   **`selecionar <tabela>`** (ex.: `bronze_arquivos`, `silver_vendas`, `gold_vendas_por_filial`)
+   para **ver os dados**; ou em **`Comando SQL`** (link no topo, ao lado de *Importar/Exportar*)
+   para **rodar uma consulta** — abre uma caixa de texto; cole a consulta e clique em **Executar**.
+3. **Importante — cole só o SQL:** no **Comando SQL** cole **apenas o SQL** (o texto **dentro das
+   aspas** do `-c "..."` mostrado nos exemplos). **Não** cole o `docker compose exec … psql …`
+   nem linhas `#` — isso é comando de **terminal**, e o Adminer só entende SQL. Ex.: em vez de
+   `docker compose exec postgres psql -U puc -d vendas -c "SELECT * FROM gold_kpis_gerais;"`,
+   cole apenas `SELECT * FROM gold_kpis_gerais;`.
+4. **Dica:** a tabela pode ser larga — **role na horizontal** para ver todas as colunas (ex.: em
    `bronze_arquivos`, `original_name` fica mais à esquerda e `linhas_total/validas/rejeitadas`
    mais à direita).
 

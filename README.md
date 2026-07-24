@@ -295,7 +295,13 @@ docker compose exec postgres psql -U puc -d vendas -c "SELECT * FROM gold_vendas
     tela de Runs. Veja pelo `psql` acima (`SELECT COUNT(*) FROM silver_vendas` → 80) **ou** no
     **Adminer** → `selecionar silver_vendas` (lista as 80 linhas).
   - **MinIO Console** (bucket `bronze`): os 4 objetos brutos preservados.
-- **Em caso de falha:** ver `docker compose logs prefect-worker`; conferir se o deployment/automation existem (`prefect deployment ls`).
+- **Em caso de falha:** ver `docker compose logs prefect-worker` e conferir se o deployment e a
+  automation existem (devem listar `ingestao-vendas` e `disparar-ingestao-vendas`):
+  ```bash
+  docker compose exec prefect-worker prefect deployment ls
+  docker compose exec prefect-worker prefect automation ls
+  ```
+  Se algum faltar, recrie com `docker compose up prefect-init`.
 
 ### Teste 2 — Registros inválidos (carga parcial)
 

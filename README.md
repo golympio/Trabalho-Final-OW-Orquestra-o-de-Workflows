@@ -473,8 +473,8 @@ docker compose up -d       # sobe novamente
 - [ ] **Idempotência:** duplicidade de arquivo e de venda = 0 (Teste 3).
 - [ ] **Modularidade:** tasks independentes em `tasks/` (Bronze/Silver/Gold).
 - [ ] **Persistência:** MinIO (Bronze) + PostgreSQL (Silver/Gold/controle).
-- [ ] **Observabilidade:** UI do Prefect (Runs, logs, retries, Event Feed, Automations) + Artifacts + Adminer.
-- [ ] **Documentação:** este README executável (§1–13).
+- [ ] **Observabilidade:** UI do Prefect (Runs, logs, retries, Event Feed, Automations, Artifacts) + Console do MinIO + Adminer.
+- [ ] **Documentação:** este README reproduz o projeto do zero, do §1 ao §13.
 - [ ] **Pitch em Vídeo:** link preenchido na seção abaixo.
 
 ---

@@ -484,8 +484,6 @@ docker compose up -d       # sobe novamente
 O vídeo apresenta o problema, a arquitetura, a demonstração do pipeline em execução e as
 principais decisões técnicas do projeto.
 
-**Link do vídeo:** [INSERIR LINK DO PITCH AQUI]
-
-**Duração:** [INFORMAR DURAÇÃO]
+**Link do vídeo:** https://www.youtube.com/watch?v=VB4vWzeflc0
 
 **Forma de acesso:** vídeo não listado ou compartilhado com permissão de visualização.
